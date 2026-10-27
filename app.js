@@ -1,8 +1,40 @@
 (() => {
   "use strict";
 
+  // Bump together with <meta name="app-version"> in index.html.
+  const APP_VERSION = "2";
+
+  // While an update rolls out, an older saved page can arrive with this newer
+  // script. Reload (a few tries at most) instead of running against the wrong page.
+  const pageVersion = document.querySelector('meta[name="app-version"]');
+  if (!pageVersion || pageVersion.content !== APP_VERSION) {
+    let tries = 0;
+    try {
+      tries = Number(sessionStorage.getItem("fast-reload-tries")) || 0;
+      sessionStorage.setItem("fast-reload-tries", String(tries + 1));
+    } catch {
+      tries = 3;
+    }
+    if (tries < 3) {
+      const reload = () => location.reload();
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.addEventListener("controllerchange", reload);
+        navigator.serviceWorker.register("sw.js").then((r) => r.update()).catch(() => {});
+      }
+      setTimeout(reload, 2500);
+    }
+    return;
+  }
+  try {
+    sessionStorage.removeItem("fast-reload-tries");
+  } catch {
+    /* ignore */
+  }
+
   const STORAGE_KEY = "fast-log-v1";
   const GOAL_KEY = "fast-goal-v1";
+  const PROFILE_KEY = "fast-profile-v1";
+  const BACKUP_KEY = "fast-last-backup-v1";
   const HOUR = 3600 * 1000;
   const PRESET_GOALS = [13, 14, 16, 18, 20, 24, 36, 48];
 
@@ -38,6 +70,19 @@
     fastList: document.getElementById("fast-list"),
     emptyState: document.getElementById("empty-state"),
     template: document.getElementById("fast-template"),
+    burnLabel: document.getElementById("burn-label"),
+    profileDetails: document.getElementById("profile-details"),
+    profileForm: document.getElementById("profile-form"),
+    profileSex: document.getElementById("profile-sex"),
+    profileAge: document.getElementById("profile-age"),
+    profileHeight: document.getElementById("profile-height"),
+    profileWeight: document.getElementById("profile-weight"),
+    profileActivity: document.getElementById("profile-activity"),
+    profileResult: document.getElementById("profile-result"),
+    backupBtn: document.getElementById("backup-btn"),
+    restoreBtn: document.getElementById("restore-btn"),
+    restoreInput: document.getElementById("restore-input"),
+    backupStatus: document.getElementById("backup-status"),
   };
 
   const RING_LENGTH = 2 * Math.PI * Number(els.ring.getAttribute("r"));
@@ -78,8 +123,26 @@
     }
   }
 
+  function loadJson(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveJson(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      /* ignore */
+    }
+  }
+
   let fasts = loadFasts();
   let goalHours = loadGoal();
+  let profile = loadJson(PROFILE_KEY);
 
   // When hosted on claude.ai, keep fasts in the viewer's private db subtree;
   // elsewhere (GitHub Pages, local file) localStorage is the only store.
@@ -230,6 +293,32 @@
     return streak;
   }
 
+  // ---- Calories ----
+
+  function validProfile(pr) {
+    return (
+      !!pr &&
+      (pr.sex === "male" || pr.sex === "female") &&
+      pr.age > 0 &&
+      pr.height > 0 &&
+      pr.weight > 0 &&
+      pr.activity > 0
+    );
+  }
+
+  // Mifflin-St Jeor resting energy, scaled by activity level. Fasting doesn't
+  // raise this; it changes where the energy comes from (stored glycogen, then fat).
+  function kcalPerHour() {
+    if (!validProfile(profile)) return null;
+    const { sex, age, height, weight, activity } = profile;
+    const bmr = 10 * weight + 6.25 * height - 5 * age + (sex === "male" ? 5 : -161);
+    return (bmr * activity) / 24;
+  }
+
+  function formatKcal(n) {
+    return Math.round(n).toLocaleString("en-GB");
+  }
+
   // ---- Rendering ----
 
   function syncGoalControls() {
@@ -258,6 +347,14 @@
 
       els.stageLabel.textContent = stageFor(elapsed / HOUR).text;
       els.stageLabel.hidden = false;
+
+      const rate = kcalPerHour();
+      if (rate) {
+        els.burnLabel.textContent = `🔥 ~${formatKcal(rate)} kcal/h · ~${formatKcal((rate * elapsed) / HOUR)} kcal burned so far`;
+      } else if (!els.burnLabel.querySelector("button")) {
+        els.burnLabel.innerHTML = '🔥 <button type="button">Add your profile</button> to see calories burned';
+      }
+      els.burnLabel.hidden = false;
     } else {
       const last = completedFasts()[0];
       els.timerLabel.textContent = last ? "Eating window" : "Ready to fast";
@@ -265,6 +362,7 @@
       els.timerSub.textContent = last ? "since your last fast" : `Goal: ${goalHours}h`;
       els.ring.classList.remove("reached");
       els.stageLabel.hidden = true;
+      els.burnLabel.hidden = true;
     }
 
     els.ring.style.strokeDashoffset = String(RING_LENGTH * (1 - progress));
@@ -357,6 +455,33 @@
     renderControls();
     renderStats();
     renderHistory();
+    renderProfile();
+    renderBackupStatus();
+  }
+
+  function renderProfile() {
+    const rate = kcalPerHour();
+    els.profileResult.textContent = rate
+      ? `Estimated: ~${formatKcal(rate)} kcal per hour, ~${formatKcal(rate * 24)} kcal per day.`
+      : "Fill in all fields to see your estimate.";
+  }
+
+  function fillProfileForm() {
+    const pr = profile || {};
+    els.profileSex.value = pr.sex || "";
+    els.profileAge.value = pr.age || "";
+    els.profileHeight.value = pr.height || "";
+    els.profileWeight.value = pr.weight || "";
+    els.profileActivity.value = String(pr.activity || 1.2);
+  }
+
+  function renderBackupStatus(message) {
+    if (message) {
+      els.backupStatus.textContent = message;
+      return;
+    }
+    const last = loadJson(BACKUP_KEY);
+    els.backupStatus.textContent = last ? `Last backup: ${formatDateTime(last)}` : "No backup saved yet.";
   }
 
   function buildFastElement(fast) {
@@ -368,8 +493,10 @@
     const badge = node.querySelector(".fast-badge");
     badge.textContent = met ? `✓ ${fast.goalHours}h goal` : `${fast.goalHours}h goal`;
     badge.classList.toggle("met", met);
+    const rate = kcalPerHour();
     node.querySelector(".fast-meta").textContent =
-      `${formatDateTime(fast.startedAt)} → ${formatDateTime(fast.endedAt)}`;
+      `${formatDateTime(fast.startedAt)} → ${formatDateTime(fast.endedAt)}` +
+      (rate ? ` · ~${formatKcal((rate * durationOf(fast)) / HOUR)} kcal` : "");
 
     const editBtn = node.querySelector(".edit-btn");
     const deleteBtn = node.querySelector(".delete-btn");
@@ -477,6 +604,102 @@
     else render();
   }
 
+  // ---- Backup & restore ----
+
+  function isValidDate(v) {
+    return typeof v === "string" && !isNaN(new Date(v));
+  }
+
+  function cleanFast(f) {
+    if (!f || typeof f.id !== "string" || !isValidDate(f.startedAt)) return null;
+    if (f.endedAt !== null && !isValidDate(f.endedAt)) return null;
+    const goal = Number(f.goalHours);
+    return { id: f.id, startedAt: f.startedAt, endedAt: f.endedAt, goalHours: goal > 0 ? goal : 16 };
+  }
+
+  async function saveBackup() {
+    const now = new Date();
+    const data = { app: "fast", version: 1, exportedAt: now.toISOString(), goalHours, profile, fasts };
+    const name = `fast-backup-${dayKey(now)}.json`;
+    const file = new File([JSON.stringify(data, null, 2)], name, { type: "application/json" });
+
+    try {
+      // On iPhone this opens the share sheet, where "Save to Files" is offered.
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "Fast backup" });
+      } else {
+        const url = URL.createObjectURL(file);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      }
+    } catch (e) {
+      if (e && e.name === "AbortError") return renderBackupStatus("Backup cancelled.");
+      console.error("Backup failed", e);
+      return renderBackupStatus("Backup failed. Please try again.");
+    }
+    saveJson(BACKUP_KEY, now.toISOString());
+    renderBackupStatus(`Backup saved (${fasts.length} fasts).`);
+  }
+
+  // Merges a backup into what's here: nothing already on this phone is removed.
+  function restoreBackup(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return renderBackupStatus("That file isn't a Fast backup.");
+    }
+    if (!data || data.app !== "fast" || !Array.isArray(data.fasts)) {
+      return renderBackupStatus("That file isn't a Fast backup.");
+    }
+
+    const incoming = data.fasts.map(cleanFast).filter(Boolean);
+    const byId = new Map(fasts.map((f) => [f.id, f]));
+    const localActive = activeFast();
+    let added = 0;
+    let duplicates = 0;
+    let skippedActive = false;
+
+    for (const f of incoming) {
+      if (byId.has(f.id)) {
+        duplicates++;
+        continue;
+      }
+      // Only one fast can run at a time; the one already running here wins.
+      if (!f.endedAt && (localActive || [...byId.values()].some((x) => !x.endedAt))) {
+        skippedActive = true;
+        continue;
+      }
+      byId.set(f.id, f);
+      added++;
+      cloudPut(f);
+    }
+
+    fasts = [...byId.values()];
+    saveFasts(fasts);
+
+    if (!validProfile(profile) && validProfile(data.profile)) {
+      profile = data.profile;
+      saveJson(PROFILE_KEY, profile);
+      fillProfileForm();
+    }
+    if (!activeFast() && Number(data.goalHours) > 0) {
+      goalHours = Number(data.goalHours);
+      saveGoal(goalHours);
+    }
+
+    render();
+    renderBackupStatus(
+      `Restored: ${added} fast${added === 1 ? "" : "s"} added, ${duplicates} already here.` +
+        (skippedActive ? " Kept the fast that's running here; the backup's running fast was skipped." : "")
+    );
+  }
+
   // ---- Events ----
 
   els.toggleBtn.addEventListener("click", () => {
@@ -501,6 +724,34 @@
     if (hours >= 1 && hours <= 168) setGoal(hours);
   });
 
+  els.profileForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    profile = {
+      sex: els.profileSex.value,
+      age: Number(els.profileAge.value),
+      height: Number(els.profileHeight.value),
+      weight: Number(els.profileWeight.value),
+      activity: Number(els.profileActivity.value),
+    };
+    saveJson(PROFILE_KEY, profile);
+    if (document.activeElement) document.activeElement.blur();
+    render();
+  });
+
+  els.burnLabel.addEventListener("click", (e) => {
+    if (!e.target.closest("button")) return;
+    els.profileDetails.open = true;
+    els.profileDetails.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  els.backupBtn.addEventListener("click", saveBackup);
+  els.restoreBtn.addEventListener("click", () => els.restoreInput.click());
+  els.restoreInput.addEventListener("change", async () => {
+    const file = els.restoreInput.files && els.restoreInput.files[0];
+    els.restoreInput.value = "";
+    if (file) restoreBackup(await file.text());
+  });
+
   els.startInput.addEventListener("change", () => {
     const active = activeFast();
     const startedAt = fromLocalInput(els.startInput.value);
@@ -511,6 +762,7 @@
     updateFast(active.id, { startedAt });
   });
 
+  fillProfileForm();
   render();
   setInterval(renderTimer, 1000);
   // Refresh day boundaries and goal time periodically, and when coming back to the tab.

@@ -19,6 +19,8 @@ Deployed automatically to GitHub Pages on every push to `main` (requires Setting
 - Eating-window timer between fasts.
 - Stats: number of fasts, day streak, average, longest, goal hit rate, and a last-7-days chart.
 - History with edit and delete.
+- Calories estimate: set sex, age, height, weight and activity level once to see ~kcal per hour and kcal burned so far (Mifflin-St Jeor resting energy × activity level).
+- Backup & restore: save a backup file (on iPhone via the share sheet → Save to Files) and restore it later. Restoring only adds fasts and never removes what's already there.
 - Light and dark mode, mobile friendly.
 - Always loads the latest version when online, and works offline (`sw.js`).
 
