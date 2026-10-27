@@ -20,6 +20,7 @@ Deployed automatically to GitHub Pages on every push to `main` (requires Setting
 - Stats: number of fasts, day streak, average, longest, goal hit rate, and a last-7-days chart.
 - History with edit and delete.
 - Light and dark mode, mobile friendly.
+- Always loads the latest version when online, and works offline (`sw.js`).
 
 ## Run locally
 

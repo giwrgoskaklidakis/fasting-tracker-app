@@ -525,5 +525,9 @@
   if (navigator.storage && typeof navigator.storage.persist === "function") {
     navigator.storage.persist().catch(() => {});
   }
+  // Load the newest version whenever online, and keep working offline.
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    navigator.serviceWorker.register("sw.js").catch((e) => console.error("Offline support unavailable", e));
+  }
   connectCloud().catch((e) => console.error("Cloud sync unavailable", e));
 })();
