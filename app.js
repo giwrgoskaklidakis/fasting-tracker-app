@@ -4,7 +4,7 @@
   const STORAGE_KEY = "fast-log-v1";
   const GOAL_KEY = "fast-goal-v1";
   const HOUR = 3600 * 1000;
-  const PRESET_GOALS = [13, 14, 16, 18, 20, 24, 36];
+  const PRESET_GOALS = [13, 14, 16, 18, 20, 24, 36, 48];
 
   // Rough, commonly cited milestones; shown as a guide only.
   const STAGES = [
