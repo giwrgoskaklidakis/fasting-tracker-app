@@ -521,5 +521,9 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) render();
   });
+  // Ask the browser not to evict our data (e.g. iOS clears unused web app storage).
+  if (navigator.storage && typeof navigator.storage.persist === "function") {
+    navigator.storage.persist().catch(() => {});
+  }
   connectCloud().catch((e) => console.error("Cloud sync unavailable", e));
 })();
